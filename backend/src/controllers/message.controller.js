@@ -3,6 +3,8 @@ import Message from "../models/message.model.js";
 
 import cloudinary from "../lib/cloudinary.js";
 import { getReceiverSocketId, io } from "../lib/socket.js";
+import Notification from "../models/notification.model.js";
+import Media from "../models/media.model.js";
 
 export const getUsersForSidebar = async (req, res) => {
   try {
@@ -42,12 +44,16 @@ export const sendMessage = async (req, res) => {
     const senderId = req.user._id;
 
     let imageUrl;
+    let publicId;
+
     if (image) {
-      // Upload base64 image to cloudinary
+      // Upload base64 image to Cloudinary
       const uploadResponse = await cloudinary.uploader.upload(image);
       imageUrl = uploadResponse.secure_url;
+      publicId = uploadResponse.public_id;
     }
 
+    // Save the message
     const newMessage = new Message({
       senderId,
       receiverId,
@@ -57,6 +63,25 @@ export const sendMessage = async (req, res) => {
 
     await newMessage.save();
 
+    // Save media metadata if there was an image
+    if (imageUrl) {
+      await Media.create({
+        url: imageUrl,
+        uploadedBy: senderId,
+        messageId: newMessage._id,
+        publicId,
+        mediaType: "image",
+      });
+    }
+
+    // 🔔 Create a notification for the receiver
+    await Notification.create({
+      user: receiverId,
+      type: "message",
+      content: `New message from ${req.user.fullName}`,
+    });
+
+    // 🔄 Emit via Socket.IO if receiver is online
     const receiverSocketId = getReceiverSocketId(receiverId);
     if (receiverSocketId) {
       io.to(receiverSocketId).emit("newMessage", newMessage);

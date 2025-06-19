@@ -22,6 +22,7 @@ export const useChatStore = create((set, get) => ({
       set({ isUsersLoading: false });
     }
   },
+
   getConversations: async () => {
     try {
       const res = await axiosInstance.get("/conversations");
@@ -58,46 +59,51 @@ export const useChatStore = create((set, get) => ({
     }
   },
 
-  // ---- Socket Subscription Methods ----
-  subscribeToMessages: () => {
-    const { selectedUser } = get();
-    if (!selectedUser) return;
+  // --- Socket subscription ---
 
+  socketListenerAdded: false, // flag to prevent multiple listeners
+
+  subscribeToMessages: () => {
     const socket = useAuthStore.getState().socket;
     if (!socket) return;
 
+    if (get().socketListenerAdded) return; // already listening
+
     socket.on("newMessage", (newMessage) => {
-      // Check if the incoming message is from the currently selected user (chat partner)
+      const selectedUser = get().selectedUser;
+      if (!selectedUser) return;
+
+      // Only add if message is relevant to selected chat
       const isRelevant =
-        (newMessage.senderId === selectedUser._id) ||
-        (newMessage.receiverId === selectedUser._id);
+        newMessage.senderId === selectedUser._id ||
+        newMessage.receiverId === selectedUser._id;
+
       if (!isRelevant) return;
 
-      // Update messages state with the new message
-      set({
-        messages: [...get().messages, newMessage],
-      });
+      set((state) => ({
+        messages: [...state.messages, newMessage],
+      }));
     });
+
+    set({ socketListenerAdded: true });
   },
 
   unsubscribeFromMessages: () => {
     const socket = useAuthStore.getState().socket;
     if (!socket) return;
+
     socket.off("newMessage");
+    set({ socketListenerAdded: false });
   },
 
   setSelectedUser: (selectedUser) => {
-    set({ selectedUser });
+    set({ selectedUser, messages: [] });
 
-    // When selectedUser changes, reset messages and subscribe to new messages
-    set({ messages: [] });
-
-    // Unsubscribe old and subscribe to new messages
+    // Important: Unsubscribe then subscribe (to avoid duplicates)
     const { unsubscribeFromMessages, subscribeToMessages } = get();
     unsubscribeFromMessages();
     subscribeToMessages();
 
-    // Optionally: fetch old messages for newly selected user
     if (selectedUser?._id) {
       get().getMessages(selectedUser._id);
     }

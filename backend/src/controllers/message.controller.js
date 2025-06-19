@@ -5,6 +5,7 @@ import cloudinary from "../lib/cloudinary.js";
 import { getReceiverSocketId, io } from "../lib/socket.js";
 import Notification from "../models/notification.model.js";
 import Media from "../models/media.model.js";
+import Conversation from "../models/conversation.model.js";
 
 export const getUsersForSidebar = async (req, res) => {
   try {
@@ -73,17 +74,41 @@ export const sendMessage = async (req, res) => {
         mediaType: "image",
       });
     }
+    // --- Conversation logic start ---
+    // Find existing conversation between these two users (both members must be in array)
+    let conversation = await Conversation.findOne({
+      members: { $all: [senderId, receiverId] },
+    });
+
+    // If no conversation found, create new
+    if (!conversation) {
+      conversation = new Conversation({
+        members: [senderId, receiverId],
+        lastMessage: text || (imageUrl ? "Image" : ""),
+      });
+    } else {
+      // Update last message and timestamp
+      conversation.lastMessage = text || (imageUrl ? "Image" : "");
+      conversation.updatedAt = Date.now();
+    }
+
+    await conversation.save();
+    // --- Conversation logic end ---
+
+    // 🔄 Emit via Socket.IO if receiver is online
+    const receiverSocketId = getReceiverSocketId(receiverId);
 
     // 🔔 Create a notification for the receiver
-    await Notification.create({
+    const notification = await Notification.create({
       user: receiverId,
       type: "message",
       content: `New message from ${req.user.fullName}`,
     });
 
-    // 🔄 Emit via Socket.IO if receiver is online
-    const receiverSocketId = getReceiverSocketId(receiverId);
+
+    // Emit notification if user is online
     if (receiverSocketId) {
+      io.to(receiverSocketId).emit("newNotification", notification);
       io.to(receiverSocketId).emit("newMessage", newMessage);
     }
 
@@ -93,3 +118,20 @@ export const sendMessage = async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
+export const getConversations = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const conversations = await Conversation.find({
+      members: userId,
+    })
+      .populate("members", "-password")
+      .sort({ updatedAt: -1 });
+
+    res.status(200).json(conversations);
+  } catch (error) {
+    console.error("Error fetching conversations:", error.message);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+

@@ -55,3 +55,21 @@ export const markAsRead = async (req, res) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
+// Mark all notifications as read for logged-in user
+export const markAllAsRead = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    await Notification.updateMany(
+      { user: userId, isRead: false },    // 🔍 condition
+      { $set: { isRead: true } }          // ✅ update
+    );
+    console.log("Matched:", result.matchedCount, "Modified:", result.modifiedCount);
+
+    res.status(200).json({ message: "All notifications marked as read" });
+  } catch (error) {
+    console.error("Error marking all notifications as read:", error.message);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
